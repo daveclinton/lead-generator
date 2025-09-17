@@ -1,248 +1,257 @@
-import streamlit as st
 import base64
-import os
 import json
-from dotenv import load_dotenv
+import streamlit as st
 from openai import OpenAI
-from brightdata import bdclient  
-
-
-load_dotenv()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-BRIGHT_DATA_API_KEY = os.getenv("BRIGHT_DATA_API_KEY")
-
-client = OpenAI(api_key=OPENAI_API_KEY)
-bd = bdclient(api_token=BRIGHT_DATA_API_KEY)
-
+import requests 
 
 st.set_page_config(
-    page_title="AI Lead Generation Agent",
+    page_title="Deep Research Agent",
     page_icon="🎯",
     layout="wide"
 )
 
-with st.sidebar:
-    logo_path = "./assets/bright-data-logo.png"
-    if os.path.exists(logo_path):
-        with open(logo_path, "rb") as f:
-            bright_logo = base64.b64encode(f.read()).decode()
-
-        st.markdown(
-            f"""
-            <div style="text-align: center;">
-                <img src="data:image/png;base64,{bright_logo}" style="height: 100px;"/>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    st.markdown("### AI Assistant")
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
-
-    for m in st.session_state.chat_history:
-        with st.chat_message(m["role"]):
-            st.markdown(m["content"])
-
-    user_message = st.chat_input("Describe the leads you want...")
-
-    if user_message:
-        st.session_state.chat_history.append({"role": "user", "content": user_message})
-        ai_response = f"🤖 Got it! I'll look for: **{user_message}**"
-        st.session_state.chat_history.append({"role": "assistant", "content": ai_response})
-        st.rerun()  
-
-
-def parse_query_to_filters(query: str):
-    """Use OpenAI to turn natural language into structured filters."""
-    prompt = f"""
-    Convert this lead search request into structured JSON filters:
-    "{query}"
-
-    Return only valid JSON in this format:
-    {{
-      "role": "Marketing Manager",
-      "industry": "Fintech",
-      "location": "Kenya"
-    }}
+with open("./assets/bright-data-logo.png", "rb") as brightdata_logo:
+    brightdata_logo = base64.b64encode(brightdata_logo.read()).decode()
+    title_hmtl = f""" 
+    <div>
+        <img src="data:image/png;base64,{brightdata_logo}" style="height: 60px; width:150px;"/>
+        <h1 style="margin: 0; padding: 0; font-size: 2.5rem; font-weight: bold;">
+            <span style="font-size:2.5rem;">🔎</span> AI-Powered Lead Generation Agent with
+            <span style="color: #fb542c;">Bright Data</span> & 
+            <span style="color: #8564ff;">OpenAI</span>
+        </h1>
+    </div>
     """
+    st.markdown(title_hmtl, unsafe_allow_html=True)
+
+with st.sidebar:
+    bright_data_api_key = st.text_input("Enter your Bright Data API key", type="password")
+    st.divider()
+
+    st.subheader("Enter OpenAI API key")
+    open_ai_api_key = st.text_input("Enter OpenAI API key", type="password")
+    st.divider()
+
+    st.header("How it Works")
+    st.markdown("""
+    1. **Enter your API keys above and lead requirements** in the chat (e.g., "Find marketing managers in fintech companies in the world")
+    2. **Click 'Enter Button'** to start the AI agent
+    3. **Review the AI-enriched results** with scores and outreach suggestions
+    """)
+    st.markdown("---")
+
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+user_input = st.chat_input("Describe the Leads you want....")
+
+def extract_search_parameters(user_input):
+    """Use OpenAI to extract search parameters from natural language input"""
+    if not open_ai_api_key:
+        st.error("OpenAI API key is required")
+        return None
+    
     try:
+        client = OpenAI(api_key=open_ai_api_key)
+        
+        prompt = f"""
+        Extract the following information from the user query for lead generation:
+        - Role/Job Title
+        - Industry
+        - Location
+        - Any other specific requirements
+        
+        User query: {user_input}
+        
+        Return a JSON object with keys: role, industry, location, other_requirements.
+        """
+        
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "system", "content": "You are an expert lead generation assistant. Return only valid JSON."},
-                      {"role": "user", "content": prompt}],
-            temperature=0
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that extracts search parameters from natural language queries. Always return valid JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.1
         )
-        filters_text = response.choices[0].message.content.strip()
-        if filters_text.startswith("```"):
-            filters_text = filters_text.split("```")[1]
-            if filters_text.startswith("json"):
-                filters_text = filters_text[4:]
-        filters = json.loads(filters_text)
+        
+    
+        result = response.choices[0].message.content
+        if "```json" in result:
+            result = result.split("```json")[1].split("```")[0]
+        elif "```" in result:
+            result = result.split("```")[1].split("```")[0]
+            
+        return json.loads(result)
+    
     except Exception as e:
-        st.error(f"Error parsing query: {e}")
-        filters = {"query": query}
-    return filters
+        st.error(f"Error extracting search parameters: {e}")
+        return {
+            "role": "marketing manager" if "marketing" in user_input.lower() else "professional",
+            "industry": "fintech" if "fintech" in user_input.lower() else "technology",
+            "location": "United States" if "us" in user_input.lower() or "usa" in user_input.lower() else "Worldwide",
+            "other_requirements": user_input
+        }
 
-
-def fetch_leads_from_brightdata(filters: dict):
-    """Fetch real leads with Bright Data (example using LinkedIn search)."""
+def fetch_leads_from_brightdata(filters):
+    """Fetch real leads with Bright Data"""
+    if not bright_data_api_key:
+        st.error("Bright Data API key is required")
+        return []
+    
     try:
-        keyword = filters.get("role", "") + " " + filters.get("industry", "")
-        location = filters.get("location", "")
-
-        result = bd.search_linkedin.jobs(
-            keyword=keyword or "Software Engineer",
-            location=location or "Kenya",
-            country="KE",
-            time_range="Past month",
-            job_type="Full-time"
+        headers = {
+            "Authorization": f"Bearer {bright_data_api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "query": f"{filters.get('role', '')} {filters.get('industry', '')}",
+            "location": filters.get("location", ""),
+            "country": "US",  
+            "limit": 10  
+        }
+        
+        response = requests.post(
+            "https://api.brightdata.com/datasets/v1/search",
+            headers=headers,
+            json=payload,
+            timeout=30
         )
-
-        leads = bd.parse_content(result)
-        return leads if isinstance(leads, list) else [leads]
+        
+        if response.status_code == 200:
+            return response.json().get("data", [])
+        else:
+            st.error(f"Bright Data API error: {response.status_code} - {response.text}")
+            return [
+                {"name": "John Doe", "title": "Marketing Director", "company": "TechFin Inc.", "location": "San Francisco, CA", "linkedin": "https://linkedin.com/in/johndoe"},
+                {"name": "Jane Smith", "title": "Head of Growth", "company": "Fintech Solutions", "location": "New York, NY", "linkedin": "https://linkedin.com/in/janesmith"},
+                {"name": "Robert Johnson", "title": "VP of Marketing", "company": "BankInnovate", "location": "Chicago, IL", "linkedin": "https://linkedin.com/in/robertjohnson"}
+            ]
+            
     except Exception as e:
         st.error(f"Error fetching leads from Bright Data: {e}")
         return [
-            {"title": "Software Engineer", "company": "TechCorp", "location": "Nairobi, Kenya"},
-            {"title": "Marketing Manager", "company": "StartupX", "location": "Mombasa, Kenya"},
-            {"title": "Data Scientist", "company": "DataFirm", "location": "Kisumu, Kenya"}
+            {"name": "John Doe", "title": "Marketing Director", "company": "TechFin Inc.", "location": "San Francisco, CA", "linkedin": "https://linkedin.com/in/johndoe"},
+            {"name": "Jane Smith", "title": "Head of Growth", "company": "Fintech Solutions", "location": "New York, NY", "linkedin": "https://linkedin.com/in/janesmith"},
+            {"name": "Robert Johnson", "title": "VP of Marketing", "company": "BankInnovate", "location": "Chicago, IL", "linkedin": "https://linkedin.com/in/robertjohnson"}
         ]
 
-
-def enrich_leads_with_ai(leads: list):
-    """Use OpenAI to enrich, score, and generate outreach strategy."""
-    enriched = []
-    for lead in leads[:10]:  
-        profile_text = f"{lead.get('title', '')} at {lead.get('company', '')}, Location: {lead.get('location', '')}"
-
-        prompt = f"""
-        Analyze this lead and return JSON with:
-        - summary (1 sentence about their background)
-        - score (1-10 relevance score as integer)
-        - outreach (best way to contact)
-
-        Lead: {profile_text}
-
-        Return only valid JSON in this format:
-        {{
-          "summary": "Professional summary here",
-          "score": 8,
-          "outreach": "Suggested outreach method"
-        }}
-        """
-
-        try:
+def enrich_leads_with_ai(leads, original_query):
+    """Use OpenAI to enrich leads with scores and outreach suggestions"""
+    if not open_ai_api_key:
+        st.error("OpenAI API key is required")
+        return leads
+    
+    try:
+        client = OpenAI(api_key=open_ai_api_key)
+        
+        enriched_leads = []
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        for i, lead in enumerate(leads):
+            status_text.text(f"Analyzing lead {i+1} of {len(leads)}...")
+            progress_bar.progress((i + 1) / len(leads))
+            
+            prompt = f"""
+            Based on the original query "{original_query}" and the following lead information:
+            {json.dumps(lead, indent=2)}
+            
+            Please provide:
+            1. A relevance score from 1-100 (how well this lead matches the query)
+            2. A brief analysis of why this lead is a good fit
+            3. A personalized outreach suggestion
+            
+            Return your response as a JSON object with keys: score, analysis, outreach_suggestion.
+            """
+            
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "system", "content": "You enrich leads for sales teams. Return only valid JSON."},
-                          {"role": "user", "content": prompt}],
-                temperature=0.5
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "You are a lead generation expert. Analyze leads and provide scores and outreach suggestions. Always return valid JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3
             )
             
-            enriched_text = response.choices[0].message.content.strip()
-            if enriched_text.startswith("```"):
-                enriched_text = enriched_text.split("```")[1]
-                if enriched_text.startswith("json"):
-                    enriched_text = enriched_text[4:]
-            
-            enriched_data = json.loads(enriched_text)
-        except Exception as e:
-            st.warning(f"Error enriching lead: {e}")
-            enriched_data = {
-                "summary": "Professional with relevant experience in their field",
-                "score": 5,
-                "outreach": "Send LinkedIn message with personalized introduction"
-            }
-
-        enriched.append({
-            "role": lead.get("title", "Unknown"),
-            "company": lead.get("company", "Unknown"),
-            "location": lead.get("location", "Unknown"),
-            "summary": enriched_data["summary"],
-            "score": enriched_data["score"],
-            "outreach": enriched_data["outreach"],
-        })
-    return enriched
-
-
-
-st.title("🎯 AI-Powered Lead Generation Agent")
-
-
-debug_mode = st.checkbox("🐛 Enable Debug Mode", value=True)
-
-
-run_agent = st.button("🚀 Generate Leads", type="primary")
-
-if run_agent and st.session_state.chat_history:
-    user_queries = [msg for msg in st.session_state.chat_history if msg["role"] == "user"]
-    if user_queries:
-        last_query = user_queries[-1]["content"]
-        
-        if debug_mode:
-            st.write("=" * 50)
-            st.write("🔧 **DEBUG MODE ENABLED**")
-            st.write("=" * 50)
-            st.write(f"🎯 **Processing Query:** {last_query}")
-
-        st.info("🤖 Parsing query into filters...")
-        filters = parse_query_to_filters(last_query)
-        
-        if not debug_mode:
-            st.json(filters)
-
-        st.info("🔍 Fetching leads from Bright Data...")
-        leads = fetch_leads_from_brightdata(filters)
-
-        if not leads or len(leads) == 0:
-            st.error("❌ No leads found.")
-            if debug_mode:
-                st.write("🔍 **Possible reasons:**")
-                st.write("- Bright Data API returned empty results")
-                st.write("- API credentials might be invalid")
-                st.write("- Search parameters too restrictive")
-                st.write("- API rate limits exceeded")
-        else:
-            st.success(f"✅ Found {len(leads)} leads. Enriching with AI...")
-            enriched_leads = enrich_leads_with_ai(leads)
-
-            if debug_mode:
-                st.write("=" * 50)
-                st.write("🎯 **FINAL RESULTS**")
-                st.write("=" * 50)
-
-            st.subheader("🎯 AI-Enriched Leads")
-            for i, lead in enumerate(enriched_leads, 1):
-                if lead['score'] >= 8:
-                    border_color = "#28a745"  
-                elif lead['score'] >= 6:
-                    border_color = "#ffc107"  
-                else:
-                    border_color = "#dc3545"  
+            result = response.choices[0].message.content
+            if "```json" in result:
+                result = result.split("```json")[1].split("```")[0]
+            elif "```" in result:
+                result = result.split("```")[1].split("```")[0]
                 
-                st.markdown(
-                    f"""
-                    <div style="border:2px solid {border_color}; border-radius:10px; padding:15px; margin-bottom:15px; background-color: #f8f9fa;">
-                        <h4 style="color: #2c3e50; margin-bottom: 10px;">#{i} {lead['role']} @ {lead['company']}</h4>
-                        <p><b>📍 Location:</b> {lead['location']}</p>
-                        <p><b>📝 Summary:</b> {lead['summary']}</p>
-                        <p><b>⭐ AI Lead Score:</b> <span style="color: {border_color}; font-weight: bold;">{lead['score']}/10</span></p>
-                        <p><b>💡 Suggested Outreach:</b> {lead['outreach']}</p>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-    else:
-        st.warning("Please enter a query in the chat first!")
-elif run_agent:
-    st.warning("Please enter a query in the chat first!")
+            ai_analysis = json.loads(result)
+            
+            enriched_lead = {**lead, **ai_analysis}
+            enriched_leads.append(enriched_lead)
+        
+        progress_bar.empty()
+        status_text.empty()
+        return enriched_leads
+        
+    except Exception as e:
+        st.error(f"Error enriching leads with AI: {e}")
+        return leads
+
+def display_results(leads):
+    """Display the enriched leads in a nice format"""
+    st.subheader("AI-Enriched Leads")
+    
+    for i, lead in enumerate(leads):
+        with st.expander(f"Lead #{i+1}: {lead.get('name', 'N/A')} - {lead.get('title', 'N/A')} at {lead.get('company', 'N/A')}"):
+            col1, col2 = st.columns([1, 2])
+            
+            with col1:
+                score = lead.get('score', 0)
+                if score >= 80:
+                    score_color = "green"
+                elif score >= 60:
+                    score_color = "orange"
+                else:
+                    score_color = "red"
+                
+                st.markdown(f"**Relevance Score:** <span style='color:{score_color}; font-size: 1.5rem;'>{score}/100</span>", unsafe_allow_html=True)
+                st.markdown(f"**Company:** {lead.get('company', 'N/A')}")
+                st.markdown(f"**Title:** {lead.get('title', 'N/A')}")
+                st.markdown(f"**Location:** {lead.get('location', 'N/A')}")
+                if 'linkedin' in lead:
+                    st.markdown(f"**LinkedIn:** [Profile Link]({lead.get('linkedin')})")
+            
+            with col2:
+                st.markdown("**AI Analysis:**")
+                st.info(lead.get('analysis', 'No analysis available'))
+                st.markdown("**Outreach Suggestion:**")
+                st.success(lead.get('outreach_suggestion', 'No suggestion available'))
 
 
-st.markdown("---")
-st.markdown("### How to use:")
-st.markdown("""
-1. **Enter your lead requirements** in the chat (e.g., "Find marketing managers in fintech companies in Kenya")
-2. **Click 'Generate Leads'** to start the AI agent
-3. **Review the AI-enriched results** with scores and outreach suggestions
-""")
+if user_input:
+    st.session_state.messages.append({"role": "user", "content": user_input})
+
+    with st.chat_message("user"):
+        st.markdown(user_input)
+    with st.chat_message("assistant"):
+        message_placeholder = st.empty()
+        message_placeholder.markdown("⏳ Analyzing your request...")
+        
+
+        message_placeholder.markdown("🔍 Extracting search parameters...")
+        filters = extract_search_parameters(user_input)
+
+        message_placeholder.markdown("📊 Fetching leads from Bright Data...")
+        leads = fetch_leads_from_brightdata(filters)
+        
+        message_placeholder.markdown("🧠 Enriching leads with AI analysis...")
+        enriched_leads = enrich_leads_with_ai(leads, user_input)
+        
+
+        message_placeholder.markdown("✅ Lead generation complete!")
+        display_results(enriched_leads)
+        
+        st.session_state.messages.append({"role": "assistant", "content": f"Found {len(enriched_leads)} leads for your query: {user_input}"})
