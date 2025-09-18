@@ -17,7 +17,7 @@ with open("./assets/bright-data-logo.png", "rb") as brightdata_logo:
         <img src="data:image/png;base64,{brightdata_logo}" style="height: 60px; width:150px;"/>
         <h1 style="margin: 0; padding: 0; font-size: 2.5rem; font-weight: bold;">
             <span style="font-size:2.5rem;">🔎</span> AI-Powered Lead Generation Agent with
-            <span style="color: #fb542c;">Bright Data</span> & 
+            <span style="color: #0000FF;">Bright Data</span> & 
             <span style="color: #8564ff;">OpenAI</span>
         </h1>
     </div>
@@ -130,17 +130,11 @@ def fetch_leads_from_brightdata(filters):
         else:
             st.error(f"Bright Data API error: {response.status_code} - {response.text}")
             return [
-                {"name": "John Doe", "title": "Marketing Director", "company": "TechFin Inc.", "location": "San Francisco, CA", "linkedin": "https://linkedin.com/in/johndoe"},
-                {"name": "Jane Smith", "title": "Head of Growth", "company": "Fintech Solutions", "location": "New York, NY", "linkedin": "https://linkedin.com/in/janesmith"},
-                {"name": "Robert Johnson", "title": "VP of Marketing", "company": "BankInnovate", "location": "Chicago, IL", "linkedin": "https://linkedin.com/in/robertjohnson"}
             ]
             
     except Exception as e:
         st.error(f"Error fetching leads from Bright Data: {e}")
         return [
-            {"name": "John Doe", "title": "Marketing Director", "company": "TechFin Inc.", "location": "San Francisco, CA", "linkedin": "https://linkedin.com/in/johndoe"},
-            {"name": "Jane Smith", "title": "Head of Growth", "company": "Fintech Solutions", "location": "New York, NY", "linkedin": "https://linkedin.com/in/janesmith"},
-            {"name": "Robert Johnson", "title": "VP of Marketing", "company": "BankInnovate", "location": "Chicago, IL", "linkedin": "https://linkedin.com/in/robertjohnson"}
         ]
 
 def enrich_leads_with_ai(leads, original_query):
